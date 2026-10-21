@@ -45,8 +45,8 @@ def files(*names, status="modified"):
     return [{"filename": n, "status": status} for n in names]
 
 
-def commits(*logins, verified=True):
-    return [{"sha": "c%d" % i, "author": {"login": l} if l else None, "commit": {"verification": {"verified": verified}}} for i, l in enumerate(logins)]
+def commits(*logins, verified=True, committer="web-flow"):
+    return [{"sha": "c%d" % i, "author": {"login": l} if l else None, "committer": {"login": committer}, "commit": {"verification": {"verified": verified}}} for i, l in enumerate(logins)]
 
 
 def statuses(*pairs):
@@ -147,6 +147,12 @@ class BotRuleTests(unittest.TestCase):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), pr_user="mvroeder")
         code, reason = cr.decide(FakeApi(r), ENV)
         self.assertEqual(code, 1, "a human PR with a forged bot author must need the receipt")
+
+    def test_bot_rule_needs_github_as_committer(self):
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=())
+        r[page("pulls/5/commits", 1)] = commits("dependabot[bot]", committer="mvroeder")
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1, "a forged author signed with a collaborator's own key is not a bot commit")
 
     def test_bot_rule_needs_github_verified_commits(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), verified=False)

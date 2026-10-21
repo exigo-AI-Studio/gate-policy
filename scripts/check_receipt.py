@@ -12,8 +12,8 @@ order:
    gate.json means the repository is not gated: success;
 3. no scope hit: success;
 4. bot rule: the pull request opened by a known dependency bot, every commit
-   authored by that kind of bot and GitHub-verified, every file a dependency
-   file: success;
+   authored by that kind of bot, committed by GitHub itself (web-flow) and
+   verified, every file a dependency file: success;
 5. the newest commit status `gate-receipt` on the head sha must be success;
    anything else is a failure that names the command to publish the receipt.
 
@@ -32,6 +32,7 @@ from typing import Callable, Optional
 
 CONTEXT = "gate-receipt"
 DEPENDENCY_BOT_LOGINS = ("dependabot[bot]", "renovate[bot]")
+GITHUB_COMMITTER_LOGIN = "web-flow"   # GitHub's own identity on bot commits; nobody else can sign as it
 DEPENDENCY_FILE_PATTERNS = (
     r"(^|/)go\.(mod|sum)$",
     r"(^|/)(pyproject\.toml|uv\.lock|requirements[^/]*\.txt)$",
@@ -150,12 +151,14 @@ def is_dependency_file(path: str) -> bool:
 
 def is_dependency_update(api: Api, pr_number: int, files: list[str]) -> bool:
     """True only when the pull request was opened by a dependency bot, every
-    commit is authored by a dependency bot and carries GitHub's own signature
-    (verification.verified), and every file is a dependency file. The author
-    login alone is forgeable through the author email, the PR author and the
-    signature are not. The committer is ignored on purpose: GitHub signs bot
-    commits as web-flow. A commit list at GitHub's cap is treated as not a
-    bot update, because what lies beyond the cap was never seen."""
+    commit is authored by a dependency bot, committed by GitHub itself
+    (committer login web-flow) and verified, and every file is a dependency
+    file. The author login alone is forgeable through the author email; a
+    pusher on a bot PR's branch could also sign with their own key, so
+    verification alone is not enough either. The committer login web-flow is
+    GitHub's signing identity on bot commits and cannot be produced by
+    anyone else. A commit list at GitHub's cap is treated as not a bot
+    update, because what lies beyond the cap was never seen."""
     if not files or len(files) >= FILE_CAP or not all(is_dependency_file(f) for f in files):
         return False
     pull = api("pulls/%d" % pr_number)
@@ -166,8 +169,11 @@ def is_dependency_update(api: Api, pr_number: int, files: list[str]) -> bool:
         return False
     for commit in commits:
         author = commit.get("author") or {}
+        committer = commit.get("committer") or {}
         verification = (commit.get("commit") or {}).get("verification") or {}
-        if author.get("login") not in DEPENDENCY_BOT_LOGINS or verification.get("verified") is not True:
+        if author.get("login") not in DEPENDENCY_BOT_LOGINS:
+            return False
+        if committer.get("login") != GITHUB_COMMITTER_LOGIN or verification.get("verified") is not True:
             return False
     return True
 
