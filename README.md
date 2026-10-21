@@ -52,14 +52,18 @@ the wrapup skill and the publish watchdog use this exact string.
 2. Dann `repo-gate-policy-main.json` und `repo-gate-policy-tags.json` auf
    dieses Repo anwenden (`--repo exigo-AI-Studio/gate-policy`).
 3. Die Org-Rulesets anwenden (`admin:org`). Ein Repo kommt in die
-   Include-Liste, sobald die fünf Schatten-Fälle je einmal irgendwo in der Org
-   belegt sind (Tabelle in claude-config, Plan 2, Task 6, Step 3; seit dem
-   2026-10-21 statt „zehn grüne Läufe je Repo"). Erster Zug: die sieben Repos,
-   die `org-gate-transition.json` heute nennt. Die Datei liegt seit dem
-   2026-10-21 bereit, während vier der fünf Fälle belegt sind; der
-   Dependabot-Fall fehlt noch. Angewendet wird sie erst, wenn auch der belegt
-   ist, oder wenn MvR den früheren Start bewusst entscheidet (dann blockt der
-   Check einen Dependabot-PR, bis die Bot-Ausnahme einmal live gelaufen ist); die vier mit Altvariante
-   (exigo-platform, factory-probe, factory-runtime, factory-selfhost) folgen,
-   sobald ihre Aufruf-Datei auf `main` liegt, und verlieren im selben Zug den
-   alten Pflicht-Check.
+   Include-Liste, sobald der Checker gegen echte PRs dieses Repos bestanden hat
+   (Tabelle der Fälle: claude-config, Plan 2, Task 6, Step 3; seit dem
+   2026-10-21 statt „zehn grüne Läufe je Repo"). Erster Zug: sieben Repos,
+   angewendet am 2026-10-21 (Ruleset 25558192). Zweiter Zug: factory-selfhost,
+   factory-runtime und exigo-platform. Vorher wurde der Checker lesend gegen
+   ihre letzten 20 bis 25 gemergten PRs abgespielt: 65 von 65 grün, darunter
+   zwei Renovate-PRs in exigo-platform über die Bot-Regel; den Dependabot-Fall
+   zeigt ein abgespielter PR aus gusto-helvetico (#321, erster Zug). Noch nicht
+   dabei ist factory-probe: bei 15 von 25 abgespielten PRs fehlte der
+   Quittungs-Status, weil das Register es noch nicht als `receipt-check` führt.
+   Die Aufnahme ersetzt die alten Prüfungen nicht: `gate-receipt` in
+   factory-selfhost und factory-runtime (Repo-Ruleset) und der PR-Schritt im
+   `gate`-Job von exigo-platform bleiben, bis sie je Repo in einem eigenen
+   Schritt entfernt werden, nach dem Anwenden und mit eigenem Review; bis
+   dahin gelten beide Prüfungen nebeneinander.
