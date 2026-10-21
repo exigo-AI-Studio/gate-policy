@@ -11,8 +11,9 @@ order:
 2. gate.json read at the BASE sha, so a PR cannot shrink its own scope; no
    gate.json means the repository is not gated: success;
 3. no scope hit: success;
-4. bot rule: every commit authored by a known dependency bot and every file a
-   dependency file: success;
+4. bot rule: the pull request opened by a known dependency bot, every commit
+   authored by that kind of bot and GitHub-verified, every file a dependency
+   file: success;
 5. the newest commit status `gate-receipt` on the head sha must be success;
    anything else is a failure that names the command to publish the receipt.
 
@@ -40,6 +41,8 @@ DEPENDENCY_FILE_PATTERNS = (
     r"^renovate\.json$",
 )
 PER_PAGE = 100
+FILE_CAP = 3000      # GitHub lists at most 3000 files of a pull request and truncates silently
+COMMIT_CAP = 250     # and at most 250 commits
 API_VERSION = "2022-11-28"
 REQUIRED_ENV = ("GITHUB_REPOSITORY", "PR_NUMBER", "HEAD_SHA", "BASE_SHA")
 
@@ -71,7 +74,7 @@ def make_api(token: str, repo: str, base_url: str = "https://api.github.com") ->
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise ApiError(exc.code, "%s %s" % (exc.reason, path)) from exc
-        except (urllib.error.URLError, ValueError) as exc:
+        except (urllib.error.URLError, OSError, ValueError) as exc:
             raise ApiError(0, "%s %s" % (exc, path)) from exc
 
     return api
@@ -146,17 +149,25 @@ def is_dependency_file(path: str) -> bool:
 
 
 def is_dependency_update(api: Api, pr_number: int, files: list[str]) -> bool:
-    """True only when every commit is authored by a dependency bot and every
-    file is a dependency file. The committer is ignored on purpose: GitHub
-    signs bot commits as web-flow."""
-    if not files or not all(is_dependency_file(f) for f in files):
+    """True only when the pull request was opened by a dependency bot, every
+    commit is authored by a dependency bot and carries GitHub's own signature
+    (verification.verified), and every file is a dependency file. The author
+    login alone is forgeable through the author email, the PR author and the
+    signature are not. The committer is ignored on purpose: GitHub signs bot
+    commits as web-flow. A commit list at GitHub's cap is treated as not a
+    bot update, because what lies beyond the cap was never seen."""
+    if not files or len(files) >= FILE_CAP or not all(is_dependency_file(f) for f in files):
+        return False
+    pull = api("pulls/%d" % pr_number)
+    if not isinstance(pull, dict) or (pull.get("user") or {}).get("login") not in DEPENDENCY_BOT_LOGINS:
         return False
     commits = paged(api, "pulls/%d/commits" % pr_number)
-    if not commits:
+    if not commits or len(commits) >= COMMIT_CAP:
         return False
     for commit in commits:
         author = commit.get("author") or {}
-        if author.get("login") not in DEPENDENCY_BOT_LOGINS:
+        verification = (commit.get("commit") or {}).get("verification") or {}
+        if author.get("login") not in DEPENDENCY_BOT_LOGINS or verification.get("verified") is not True:
             return False
     return True
 
@@ -169,6 +180,13 @@ def receipt_state(api: Api, head_sha: str) -> str:
     return "missing"
 
 
+def annotation(kind: str, reason: str) -> str:
+    """A GitHub workflow command line with the characters the Actions toolkit
+    escapes, so a reason can never smuggle a second command."""
+    text = reason.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return "::%s::%s" % (kind, text)
+
+
 def decide(api: Api, env: dict) -> tuple[int, str]:
     """Exit code and one line of reason, fail-closed on every error."""
     repo = env["GITHUB_REPOSITORY"]
@@ -176,21 +194,25 @@ def decide(api: Api, env: dict) -> tuple[int, str]:
     publish = "Run: gate publish-receipt --repo %s" % repo
     try:
         pr_number = int(env["PR_NUMBER"])
+    except (ValueError, TypeError):
+        return 1, "invalid PR_NUMBER: %r" % env.get("PR_NUMBER")
+    try:
         files = changed_files(api, pr_number)
+        capped = len(files) >= FILE_CAP
         scope = load_scope_at(api, env["BASE_SHA"])
         if scope is None:
             return 0, "not gated: no gate.json at base %s" % env["BASE_SHA"][:7]
         try:
-            hit = in_scope(files, scope)
+            hit = capped or in_scope(files, scope)
         except ValueError as exc:
             return 1, "invalid scope pattern in gate.json at base: %s" % exc
         if not hit:
             return 0, "out of scope: none of %d changed files matches gate.json scope" % len(files)
         if is_dependency_update(api, pr_number, files):
-            return 0, "dependency update: every commit by a dependency bot, only dependency files"
+            return 0, "dependency update: opened by a dependency bot, every commit by a bot and verified, only dependency files"
         state = receipt_state(api, head)
         if state == "success":
-            return 0, "receipt success on %s" % head[:7]
+            return 0, "receipt success on %s%s" % (head[:7], " (file list at GitHub's cap, scope assumed)" if capped else "")
         return 1, "receipt %s on %s. %s" % (state, head[:7], publish)
     except (ApiError, urllib.error.URLError) as exc:
         return 1, "API error: %s" % exc
@@ -204,11 +226,11 @@ def main(argv: list[str], env: Optional[dict] = None, api_factory: Callable[...,
     env = dict(os.environ if env is None else env)
     missing = [name for name in REQUIRED_ENV + ("GITHUB_TOKEN",) if not env.get(name)]
     if missing:
-        emit("::error::missing environment: %s" % ", ".join(missing))
+        emit(annotation("error", "missing environment: %s" % ", ".join(missing)))
         return 1
     api = api_factory(env["GITHUB_TOKEN"], env["GITHUB_REPOSITORY"], env.get("GITHUB_API_URL") or "https://api.github.com")
     code, reason = decide(api, env)
-    emit("::%s::%s" % ("notice" if code == 0 else "error", reason))
+    emit(annotation("notice" if code == 0 else "error", reason))
     return code
 
 

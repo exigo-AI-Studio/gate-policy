@@ -45,18 +45,19 @@ def files(*names, status="modified"):
     return [{"filename": n, "status": status} for n in names]
 
 
-def commits(*logins):
-    return [{"sha": "c%d" % i, "author": {"login": l} if l else None} for i, l in enumerate(logins)]
+def commits(*logins, verified=True):
+    return [{"sha": "c%d" % i, "author": {"login": l} if l else None, "commit": {"verification": {"verified": verified}}} for i, l in enumerate(logins)]
 
 
 def statuses(*pairs):
     return [{"context": c, "state": s} for c, s in pairs]
 
 
-def routes(changed=None, scope=("^src/",), commit_logins=("mvroeder",), status_pairs=(("gate-receipt", "success"),), no_gate_json=False):
+def routes(changed=None, scope=("^src/",), commit_logins=("mvroeder",), status_pairs=(("gate-receipt", "success"),), no_gate_json=False, pr_user=None, verified=True):
     r = {
         page("pulls/5/files", 1): changed if changed is not None else files("src/a.py"),
-        page("pulls/5/commits", 1): commits(*commit_logins),
+        "pulls/5": {"user": {"login": pr_user or commit_logins[0] or "mvroeder"}},
+        page("pulls/5/commits", 1): commits(*commit_logins, verified=verified),
         page("commits/%s/statuses" % HEAD, 1): statuses(*status_pairs),
     }
     if no_gate_json:
@@ -81,6 +82,15 @@ class ChangedFilesTests(unittest.TestCase):
         code, reason = cr.decide(api, ENV)
         self.assertEqual(code, 0)
         self.assertTrue(reason.startswith("receipt success"), reason)
+
+    def test_file_cap_fails_closed(self):
+        r = routes(changed=files(*["docs/%d.md" % i for i in range(100)]), status_pairs=())
+        for n in range(2, 31):
+            r[page("pulls/5/files", n)] = files(*["docs/%d-%d.md" % (n, i) for i in range(100)])
+        r[page("pulls/5/files", 31)] = []   # GitHub answers an empty page past its cap
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1, "3000 files is GitHub's cap; an in-scope file beyond it was never seen")
+        self.assertIn("Run: gate publish-receipt", reason)
 
     def test_renamed_file_counts_under_both_names(self):
         changed = [{"filename": "docs/new.md", "status": "renamed", "previous_filename": "src/old.py"}]
@@ -129,9 +139,26 @@ class BotRuleTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_bot_rule_ignores_commit_without_author_account(self):
-        r = routes(changed=files("go.mod"), scope=(), commit_logins=(None,), status_pairs=())
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=(None,), status_pairs=(), pr_user="dependabot[bot]")
         code, reason = cr.decide(FakeApi(r), ENV)
         self.assertEqual(code, 1)
+
+    def test_bot_rule_needs_the_pull_request_opened_by_the_bot(self):
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), pr_user="mvroeder")
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1, "a human PR with a forged bot author must need the receipt")
+
+    def test_bot_rule_needs_github_verified_commits(self):
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), verified=False)
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1)
+
+    def test_commit_cap_fails_closed(self):
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=tuple(["dependabot[bot]"] * 100), status_pairs=())
+        r[page("pulls/5/commits", 2)] = commits(*(["dependabot[bot]"] * 100))
+        r[page("pulls/5/commits", 3)] = commits(*(["dependabot[bot]"] * 50))
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1, "250 commits is GitHub's cap; what lies beyond was never seen")
 
 
 class ReceiptTests(unittest.TestCase):
@@ -182,6 +209,13 @@ class MainTests(unittest.TestCase):
         code = cr.main([], env={"GITHUB_TOKEN": "x"}, api_factory=lambda *a: FakeApi({}), emit=out.append)
         self.assertTrue(out[0].startswith("::error::missing environment"), out)
         self.assertEqual(code, 1)
+
+    def test_annotation_escapes_workflow_command_characters(self):
+        self.assertEqual(cr.annotation("error", "a%b\r\n::notice::x"), "::error::a%25b%0D%0A::notice::x")
+
+    def test_invalid_pr_number_is_reported_as_such(self):
+        code, reason = cr.decide(FakeApi({}), dict(ENV, PR_NUMBER="five"))
+        self.assertEqual((code, reason[:17]), (1, "invalid PR_NUMBER"))
 
     def test_main_prints_notice_on_success(self):
         out = []

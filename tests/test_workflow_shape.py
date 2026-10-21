@@ -20,20 +20,23 @@ class WorkflowShapeTests(unittest.TestCase):
         checkouts = re.findall(r"uses:\s*actions/checkout@([0-9a-f]{40})", self.text)
         self.assertEqual(len(checkouts), 1, "exactly one checkout, pinned to a full commit sha")
         self.assertRegex(self.text, r"repository:\s*exigo-AI-Studio/gate-policy")
-        self.assertRegex(self.text, r"ref:\s*v1\b")
+        self.assertRegex(self.text, r"ref:\s*\$\{\{\s*github\.job_workflow_sha\s*\}\}", "the script version matches the workflow version the caller resolved")
         self.assertRegex(self.text, r"persist-credentials:\s*false")
         self.assertNotRegex(self.text, r"ref:\s*\$\{\{\s*github\.event\.pull_request\.head", "never check out PR head code")
         self.assertNotRegex(self.text, r"pull_request\.head\.ref", "the head branch name is PR-controlled text")
 
     def test_reusable_workflow_has_read_only_permissions(self):
-        block = re.search(r"^permissions:\n((?:[ ]+.+\n)+)", self.text, re.M)
-        self.assertIsNotNone(block, "a top-level permissions block")
-        for line in block.group(1).splitlines():
-            self.assertRegex(line.strip(), r"^(contents|pull-requests|statuses): read$", line)
+        blocks = re.findall(r"^( *)permissions:\n((?:\1 +.+\n)+)", self.text, re.M)
+        self.assertGreaterEqual(len(blocks), 1, "a permissions block")
+        for _, body in blocks:
+            for line in body.splitlines():
+                self.assertRegex(line.strip(), r"^(contents|pull-requests|statuses): read$", line)
+        self.assertNotIn("write", self.text)
 
     def test_job_id_is_receipt_check(self):
         self.assertIsNotNone(re.search(r"^jobs:\n  receipt-check:\n", self.text, re.M), "the only job is receipt-check")
-        self.assertEqual(len(re.findall(r"^  [a-z-]+:\n", self.text, re.M)), 1, "exactly one job")
+        jobs = self.text[self.text.index("\njobs:\n") + 1:]
+        self.assertEqual(re.findall(r"^  ([A-Za-z0-9_-]+):\n", jobs, re.M), ["receipt-check"], "exactly one job")
 
     def test_script_runs_with_pull_request_inputs_only(self):
         self.assertRegex(self.text, r"run:\s*python3 scripts/check_receipt\.py")

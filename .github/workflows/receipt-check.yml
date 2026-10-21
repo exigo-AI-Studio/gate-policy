@@ -1,5 +1,6 @@
 # Reusable receipt check, called by every org repository's gate-policy.yml on
-# pull_request_target. It checks out gate-policy's own tree at v1 (never the
+# pull_request_target. It checks out gate-policy's own tree at the very commit
+# the caller resolved for this workflow (github.job_workflow_sha; never the
 # caller's PR code) and reads the pull request through the API with the
 # caller's read-only token. Design: claude-config, spec 2026-09-27, part B.
 name: receipt-check
@@ -13,11 +14,11 @@ jobs:
   receipt-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out gate-policy at v1 (the policy, not the caller)
+      - name: Check out gate-policy at the resolved workflow commit (the policy, not the caller)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: exigo-AI-Studio/gate-policy
-          ref: v1
+          ref: ${{ github.job_workflow_sha }}
           persist-credentials: false
       - name: Verify the pull request carries a fresh, clean gate receipt
         env:
