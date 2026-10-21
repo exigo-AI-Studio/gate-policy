@@ -55,7 +55,11 @@ the wrapup skill and the publish watchdog use this exact string.
    Include-Liste, sobald die fünf Schatten-Fälle je einmal irgendwo in der Org
    belegt sind (Tabelle in claude-config, Plan 2, Task 6, Step 3; seit dem
    2026-10-21 statt „zehn grüne Läufe je Repo"). Erster Zug: die sieben Repos,
-   die `org-gate-transition.json` heute nennt; die vier mit Altvariante
+   die `org-gate-transition.json` heute nennt. Die Datei liegt seit dem
+   2026-10-21 bereit, während vier der fünf Fälle belegt sind; der
+   Dependabot-Fall fehlt noch. Angewendet wird sie erst, wenn auch der belegt
+   ist, oder wenn MvR den früheren Start bewusst entscheidet (dann blockt der
+   Check einen Dependabot-PR, bis die Bot-Ausnahme einmal live gelaufen ist); die vier mit Altvariante
    (exigo-platform, factory-probe, factory-runtime, factory-selfhost) folgen,
    sobald ihre Aufruf-Datei auf `main` liegt, und verlieren im selben Zug den
    alten Pflicht-Check.
