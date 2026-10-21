@@ -7,6 +7,10 @@ behind it, and the org rulesets as reviewed JSON.
 Design: claude-config `docs/superpowers/specs/2026-09-27-gate-vereinheitlichung-design.md`
 (part B). Plan: claude-config `docs/superpowers/plans/2026-10-21-gate-vereinheitlichung-plan-2-server-check.md`.
 
+The repository is public since 2026-10-21 (MvR): a caller's workflow runs with
+a token scoped to the caller, which cannot check out a private gate-policy.
+Nothing here is secret; tag and branch rulesets guard what runs.
+
 Every org repository calls the workflow through an identical file
 `.github/workflows/gate-policy.yml` pinned to the moving tag `v1`. The
 workflow never checks out or runs caller code; it reads through the API only.
