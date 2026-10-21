@@ -11,9 +11,10 @@ order:
 2. gate.json read at the BASE sha, so a PR cannot shrink its own scope; no
    gate.json means the repository is not gated: success;
 3. no scope hit: success;
-4. bot rule: the pull request opened by a known dependency bot, every commit
-   authored by that kind of bot, committed by GitHub itself (web-flow) and
-   verified, every file a dependency file: success;
+4. bot rule: the run was triggered by a bot's own push (event opened or
+   synchronize with the bot as sender), the pull request was opened by a
+   dependency bot, every commit is authored by such a bot, committed by GitHub
+   (web-flow) and verified, and every file is a dependency file: success;
 5. the newest commit status `gate-receipt` on the head sha must be success;
    anything else is a failure that names the command to publish the receipt.
 
@@ -46,6 +47,7 @@ FILE_CAP = 3000      # GitHub lists at most 3000 files of a pull request and tru
 COMMIT_CAP = 250     # and at most 250 commits
 API_VERSION = "2022-11-28"
 REQUIRED_ENV = ("GITHUB_REPOSITORY", "PR_NUMBER", "HEAD_SHA", "BASE_SHA")
+BOT_PUSH_ACTIONS = ("opened", "synchronize")   # the sender of these events is the pusher
 
 Api = Callable[[str], object]
 
@@ -156,16 +158,25 @@ def is_dependency_file(path: str) -> bool:
     return any(re.search(pattern, path) for pattern in DEPENDENCY_FILE_PATTERNS)
 
 
-def is_dependency_update(api: Api, pr_number: int, files: list[str]) -> bool:
-    """True only when the pull request was opened by a dependency bot, every
-    commit is authored by a dependency bot, committed by GitHub itself
-    (committer login web-flow) and verified, and every file is a dependency
-    file. The author login alone is forgeable through the author email; a
-    pusher on a bot PR's branch could also sign with their own key, so
-    verification alone is not enough either. The committer login web-flow is
-    GitHub's signing identity on bot commits and cannot be produced by
-    anyone else. A commit list at GitHub's cap is treated as not a bot
-    update, because what lies beyond the cap was never seen."""
+def is_dependency_update(api: Api, pr_number: int, files: list[str], env: dict) -> bool:
+    """True only when this run was triggered by the bot's own push (event
+    opened or synchronize, sender a dependency bot), the pull request was
+    opened by a dependency bot, every commit is authored by such a bot,
+    committed by GitHub (web-flow) and verified, and every file is a
+    dependency file.
+
+    What the commits claim is not enough on its own: the author email is
+    free text, a pusher can sign with their own key, and a commit made through
+    GitHub's Contents or Git Data API is signed by GitHub as web-flow with any
+    author the caller names. Who pushed is what the event carries: on opened
+    and synchronize the sender is the pusher, so a human pushing onto a bot
+    branch runs this check as a human and needs the receipt. Known limit: a
+    forged commit survives until the bot next force-pushes its branch, and a
+    later bot push re-runs the check with the bot as sender; dependabot and
+    renovate rebase by force-push, which drops foreign commits. A commit list
+    at GitHub's cap is treated as not a bot update."""
+    if env.get("EVENT_ACTION") not in BOT_PUSH_ACTIONS or env.get("EVENT_SENDER") not in DEPENDENCY_BOT_LOGINS:
+        return False
     if not files or len(files) >= FILE_CAP or not all(is_dependency_file(f) for f in files):
         return False
     pull = api("pulls/%d" % pr_number)
@@ -221,8 +232,8 @@ def decide(api: Api, env: dict) -> tuple[int, str]:
             return 1, "invalid scope pattern in gate.json at base: %s" % exc
         if not hit:
             return 0, "out of scope: none of %d changed files matches gate.json scope" % len(files)
-        if is_dependency_update(api, pr_number, files):
-            return 0, "dependency update: opened by a dependency bot, every commit by a bot and verified, only dependency files"
+        if is_dependency_update(api, pr_number, files, env):
+            return 0, "dependency update: pushed and opened by a dependency bot, every commit by a bot and GitHub-signed, only dependency files"
         state = receipt_state(api, head)
         if state == "success":
             return 0, "receipt success on %s%s" % (head[:7], " (file list at GitHub's cap, scope assumed)" if capped else "")

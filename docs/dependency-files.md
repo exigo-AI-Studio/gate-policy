@@ -4,7 +4,9 @@ Gemessen am 2026-10-21 (Plan 2, Task 1). Die Bot-Regel des Prüfskripts greift
 nur, wenn jeder Commit eines PRs von einer dieser Identitäten stammt und alle
 geänderten Dateien auf eines dieser Muster passen.
 
-## Bot-Identitäten (`author.login` der Commits; der Committer ist `web-flow`, und genau das prüft das Skript mit, weil ein Fälscher den Autor setzen und mit eigenem Schlüssel signieren kann, aber nie als `web-flow` committen)
+## Bot-Identitäten (`author.login` der Commits; der Committer ist `web-flow`)
+
+Das Skript prüft Autor, Committer `web-flow` und GitHubs Signatur auf jedem Commit, verlässt sich aber nicht darauf: ein Commit über die Contents-API trägt GitHubs Signatur mit frei gewähltem Autor. Entscheidend ist deshalb der Auslöser des Laufs: die Ausnahme gilt nur, wenn das Ereignis `opened` oder `synchronize` ist und sein `sender` ein Bot, also der Bot selbst gepusht hat.
 
 | Login | Beleg |
 |---|---|

@@ -40,7 +40,7 @@ class WorkflowShapeTests(unittest.TestCase):
 
     def test_script_runs_with_pull_request_inputs_only(self):
         self.assertRegex(self.text, r"run:\s*python3 scripts/check_receipt\.py")
-        for name in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "HEAD_SHA", "BASE_SHA"):
+        for name in ("GITHUB_TOKEN", "GITHUB_REPOSITORY", "PR_NUMBER", "HEAD_SHA", "BASE_SHA", "EVENT_ACTION", "EVENT_SENDER"):
             self.assertIn(name + ":", self.text, name)
         self.assertNotRegex(self.text, r"\$\{\{\s*github\.event\.pull_request\.(title|body|head\.ref)", "no PR-controlled strings in the workflow")
 

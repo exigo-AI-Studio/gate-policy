@@ -13,7 +13,8 @@ from scripts import check_receipt as cr
 REPO = "exigo-AI-Studio/example"
 HEAD = "a" * 40
 BASE = "b" * 40
-ENV = {"GITHUB_REPOSITORY": REPO, "PR_NUMBER": "5", "HEAD_SHA": HEAD, "BASE_SHA": BASE}
+ENV = {"GITHUB_REPOSITORY": REPO, "PR_NUMBER": "5", "HEAD_SHA": HEAD, "BASE_SHA": BASE, "EVENT_ACTION": "synchronize", "EVENT_SENDER": "mvroeder"}
+BOT_ENV = dict(ENV, EVENT_SENDER="dependabot[bot]")
 
 
 class FakeApi:
@@ -132,46 +133,52 @@ class ScopeTests(unittest.TestCase):
 class BotRuleTests(unittest.TestCase):
     def test_bot_rule_passes_pure_dependency_update(self):
         r = routes(changed=files("go.mod", "go.sum"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=())
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual((code, reason[:17]), (0, "dependency update"))
 
     def test_bot_rule_needs_every_commit_from_bot(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("renovate[bot]", "mvroeder"), status_pairs=())
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1)
         self.assertIn("Run: gate publish-receipt --repo " + REPO, reason)
 
     def test_bot_rule_needs_only_dependency_files(self):
         r = routes(changed=files("go.mod", "src/x.go"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=())
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1)
 
     def test_bot_rule_ignores_commit_without_author_account(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=(None,), status_pairs=(), pr_user="dependabot[bot]")
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1)
 
     def test_bot_rule_needs_the_pull_request_opened_by_the_bot(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), pr_user="mvroeder")
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1, "a human PR with a forged bot author must need the receipt")
 
     def test_bot_rule_needs_github_as_committer(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=())
         r[page("pulls/5/commits", 1)] = commits("dependabot[bot]", committer="mvroeder")
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1, "a forged author signed with a collaborator's own key is not a bot commit")
+
+    def test_bot_rule_needs_the_bot_as_sender_of_the_push(self):
+        r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=())
+        for env in (dict(BOT_ENV, EVENT_SENDER="mvroeder"), dict(BOT_ENV, EVENT_ACTION="reopened"), dict(BOT_ENV, EVENT_ACTION="ready_for_review"), {k: v for k, v in BOT_ENV.items() if k not in ("EVENT_ACTION", "EVENT_SENDER")}):
+            code, reason = cr.decide(FakeApi(r), env)
+            self.assertEqual(code, 1, env)
 
     def test_bot_rule_needs_github_verified_commits(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=("dependabot[bot]",), status_pairs=(), verified=False)
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1)
 
     def test_commit_cap_fails_closed(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=tuple(["dependabot[bot]"] * 100), status_pairs=())
         r[page("pulls/5/commits", 2)] = commits(*(["dependabot[bot]"] * 100))
         r[page("pulls/5/commits", 3)] = commits(*(["dependabot[bot]"] * 50))
-        code, reason = cr.decide(FakeApi(r), ENV)
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1, "250 commits is GitHub's cap; what lies beyond was never seen")
 
 
