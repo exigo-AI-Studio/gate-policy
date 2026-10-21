@@ -62,6 +62,7 @@ def routes(changed=None, scope=("^src/",), commit_logins=("mvroeder",), status_p
     }
     if no_gate_json:
         r["contents/gate.json?ref=" + BASE] = cr.ApiError(404, "Not Found")
+        r["commits/" + BASE] = {"sha": BASE}
     else:
         r["contents/gate.json?ref=" + BASE] = gate_json(list(scope))
     return r
@@ -102,6 +103,13 @@ class ScopeTests(unittest.TestCase):
     def test_no_gate_json_at_base_is_success(self):
         code, reason = cr.decide(FakeApi(routes(no_gate_json=True)), ENV)
         self.assertEqual((code, reason[:9]), (0, "not gated"))
+
+    def test_unreadable_base_is_failure_not_ungated(self):
+        r = routes(no_gate_json=True)
+        r["commits/" + BASE] = cr.ApiError(404, "Not Found")
+        code, reason = cr.decide(FakeApi(r), ENV)
+        self.assertEqual(code, 1)
+        self.assertTrue(reason.startswith("API error"), reason)
 
     def test_scope_comes_from_base_sha(self):
         r = routes(changed=files("src/a.py", "gate.json"))

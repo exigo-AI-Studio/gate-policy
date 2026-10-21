@@ -3,3 +3,5 @@
 /.github/ @mvroeder
 /scripts/ @mvroeder
 /rulesets/ @mvroeder
+/tests/ @mvroeder
+/gate.json @mvroeder

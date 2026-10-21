@@ -108,13 +108,20 @@ def changed_files(api: Api, pr_number: int) -> list[str]:
 
 
 def load_scope_at(api: Api, base_sha: str) -> Optional[list[str]]:
-    """The scope list of gate.json at the base sha; None when the file is absent."""
+    """The scope list of gate.json at the base sha; None when the file is absent.
+
+    A 404 also comes back for a base sha the token cannot read, which must not
+    pass as "not gated": the base commit itself is read first, and only a
+    readable base with no gate.json counts as absent."""
     try:
         document = api("contents/gate.json?ref=%s" % base_sha)
     except ApiError as exc:
-        if exc.status == 404:
-            return None
-        raise
+        if exc.status != 404:
+            raise
+        base = api("commits/%s" % base_sha)
+        if not isinstance(base, dict) or base.get("sha") != base_sha:
+            raise ApiError(404, "base commit %s not readable, cannot tell whether gate.json exists" % base_sha[:7]) from exc
+        return None
     if not isinstance(document, dict) or document.get("encoding") != "base64":
         raise ValueError("gate.json answer is not a base64 content document")
     try:
