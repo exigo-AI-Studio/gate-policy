@@ -17,7 +17,13 @@ anywhere, in CI included.
 ## Conventions
 
 - The tag `v1` moves to the released commit on purpose; every caller pins it.
-  Move it only after the tests are green (`git tag -f v1 && git push -f origin v1`).
+  The tag ruleset `gate-policy-tags` blocks every update of `v*` for everyone,
+  admins included. Moving `v1` is therefore a deliberate, audit-logged act:
+  apply a copy of `rulesets/repo-gate-policy-tags.json` with `enforcement`
+  set to `disabled` (`scripts/apply_rulesets.sh --repo exigo-AI-Studio/gate-policy`),
+  move the tag from a reviewed commit on `main` (`git tag -f v1 <sha>` and a
+  forced push of `v1`), then apply the committed file again. Never leave the
+  ruleset disabled.
 - `rulesets/*.json` are the org rulesets; a change there is a PR with review,
   applied with `scripts/apply_rulesets.sh` by someone holding `admin:org`.
 - Work in a worktree under `.claude/worktrees/<name>`, never in the main checkout.

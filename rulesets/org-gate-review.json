@@ -3,22 +3,42 @@
   "target": "branch",
   "enforcement": "active",
   "bypass_actors": [
-    { "actor_id": 1, "actor_type": "OrganizationAdmin", "bypass_mode": "pull_request" }
+    {
+      "actor_id": 1,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "pull_request"
+    }
   ],
   "conditions": {
-    "ref_name": { "include": ["refs/heads/main"], "exclude": [] },
-    "repository_name": { "include": [], "exclude": [], "protected": false }
+    "ref_name": {
+      "include": [
+        "refs/heads/main"
+      ],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": [],
+      "exclude": [],
+      "protected": false
+    }
   },
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
     {
       "type": "required_status_checks",
       "parameters": {
-        "strict_required_status_checks_policy": true,
+        "strict_required_status_checks_policy": false,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "factory-reviewer", "integration_id": 5094937 }
+          {
+            "context": "factory-reviewer",
+            "integration_id": 5094937
+          }
         ]
       }
     }

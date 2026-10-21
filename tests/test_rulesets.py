@@ -41,17 +41,26 @@ class ReviewRulesetTests(unittest.TestCase):
         checks = rules_by_type(self.ruleset)["required_status_checks"]["parameters"]["required_status_checks"]
         self.assertEqual(checks, [{"context": "factory-reviewer", "integration_id": REPORTER_APP_INTEGRATION_ID}])
 
+    def test_rulesets_are_not_strict_about_being_up_to_date(self):
+        # strict would move every open PR's head whenever main advances and
+        # invalidate the status the reporter app posted on the old head,
+        # forcing a re-review per merge on main; the check binds to the head
+        # it reviewed, GitHub's merge check guards mergeability.
+        for name in ("org-gate-transition.json", "org-gate-review.json"):
+            params = rules_by_type(load(name))["required_status_checks"]["parameters"]
+            self.assertFalse(params["strict_required_status_checks_policy"], name)
+
     def test_review_ruleset_starts_with_empty_include_list(self):
         self.assertEqual(self.ruleset["conditions"]["repository_name"]["include"], [])
 
 
 class GatePolicyOwnRulesetsTests(unittest.TestCase):
-    def test_tag_ruleset_locks_v_tags_to_repository_admins(self):
+    def test_tag_ruleset_locks_v_tags_for_everyone(self):
         ruleset = load("repo-gate-policy-tags.json")
         self.assertEqual(ruleset["target"], "tag")
         self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
         self.assertEqual({r["type"] for r in ruleset["rules"]}, {"creation", "update", "deletion", "non_fast_forward"})
-        self.assertEqual(ruleset["bypass_actors"], [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}])
+        self.assertEqual(ruleset["bypass_actors"], [], "moving v1 is done by switching the ruleset off and on, which the audit log records")
 
     def test_main_ruleset_needs_code_owner_review_and_green_tests_with_no_bypass(self):
         ruleset = load("repo-gate-policy-main.json")
