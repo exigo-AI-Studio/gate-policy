@@ -11,4 +11,7 @@ Every org repository calls the workflow through an identical file
 `.github/workflows/gate-policy.yml` pinned to the moving tag `v1`. The
 workflow never checks out or runs caller code; it reads through the API only.
 
-Context name as GitHub reports it: measured in plan task 0, recorded here once known.
+Context name as GitHub reports it (measured 2026-10-21 on gate-policy#1, head
+`1479d9a3`): `receipt-check / receipt-check`, that is caller job id, slash,
+called job id. The caller file's `name:` does not appear in it. Rulesets,
+the wrapup skill and the publish watchdog use this exact string.
