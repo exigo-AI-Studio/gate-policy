@@ -45,6 +45,23 @@ class ReviewRulesetTests(unittest.TestCase):
         self.assertEqual(self.ruleset["conditions"]["repository_name"]["include"], [])
 
 
+class GatePolicyOwnRulesetsTests(unittest.TestCase):
+    def test_tag_ruleset_locks_v_tags_to_repository_admins(self):
+        ruleset = load("repo-gate-policy-tags.json")
+        self.assertEqual(ruleset["target"], "tag")
+        self.assertEqual(ruleset["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
+        self.assertEqual({r["type"] for r in ruleset["rules"]}, {"creation", "update", "deletion", "non_fast_forward"})
+        self.assertEqual(ruleset["bypass_actors"], [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}])
+
+    def test_main_ruleset_needs_code_owner_review_and_green_tests_with_no_bypass(self):
+        ruleset = load("repo-gate-policy-main.json")
+        self.assertEqual(ruleset["bypass_actors"], [])
+        by_type = rules_by_type(ruleset)
+        self.assertTrue(by_type["pull_request"]["parameters"]["require_code_owner_review"])
+        checks = by_type["required_status_checks"]["parameters"]["required_status_checks"]
+        self.assertEqual(checks, [{"context": "tests", "integration_id": GITHUB_ACTIONS_INTEGRATION_ID}])
+
+
 class BothRulesetsTests(unittest.TestCase):
     def test_both_rulesets_pin_main_and_forbid_deletion_and_force_push(self):
         for name in ("org-gate-transition.json", "org-gate-review.json"):
