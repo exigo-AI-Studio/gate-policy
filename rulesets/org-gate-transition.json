@@ -15,7 +15,10 @@
         "buzz-selfhost",
         "exigo-brain",
         "studio-ops",
-        "donework.ai"
+        "donework.ai",
+        "factory-selfhost",
+        "factory-runtime",
+        "exigo-platform"
       ],
       "exclude": [],
       "protected": false

@@ -4,7 +4,7 @@ The JSON files are what gets applied to the org; these tests pin the parts a
 reviewer must not have to re-derive: the measured context name, the Actions
 integration pin, main as the only ref, deletion and force-push forbidden, the
 admin bypass limited to pull requests, an empty review include list at the
-start, and the transition include list as the first batch of seven.
+start, and the transition include list as two batches (seven, then three).
 """
 import json
 import pathlib
@@ -53,14 +53,20 @@ class ReviewRulesetTests(unittest.TestCase):
     def test_review_ruleset_starts_with_empty_include_list(self):
         self.assertEqual(self.ruleset["conditions"]["repository_name"]["include"], [])
 
-    def test_transition_include_list_is_the_first_batch_of_seven(self):
-        # The seven repositories whose caller file is on main (plan 2, task 8
-        # step 1, 2026-10-21). A dropped entry or a typo would silently leave a
-        # repository without the required check; this pins the exact set.
+    def test_transition_include_list_is_the_two_batches_of_ten(self):
+        # Batch one: the seven repositories whose caller file was on main
+        # (plan 2, task 8 step 1, 2026-10-21). Batch two: factory-selfhost,
+        # factory-runtime and exigo-platform, after the checker was replayed
+        # read-only against their last 20 to 25 merged PRs (all green; two
+        # renovate PRs and one dependabot PR pass the bot rule). factory-probe
+        # is not in yet: 15 of 25 replayed PRs lacked the receipt status.
+        # A dropped entry or a typo would silently leave a repository without
+        # the required check; this pins the exact set.
         include = load("org-gate-transition.json")["conditions"]["repository_name"]["include"]
         self.assertEqual(sorted(include), sorted([
             "gusto-helvetico", "exigo-monitoring", "buzz-nest", "buzz-selfhost",
             "exigo-brain", "studio-ops", "donework.ai",
+            "factory-selfhost", "factory-runtime", "exigo-platform",
         ]))
         self.assertEqual(len(include), len(set(include)))
 
