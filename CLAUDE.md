@@ -19,8 +19,10 @@ anywhere, in CI included.
 - The tag `v1` moves to the released commit on purpose; every caller pins it.
   The tag ruleset `gate-policy-tags` blocks every update of `v*` for everyone,
   admins included. Moving `v1` is therefore a deliberate, audit-logged act:
-  apply a copy of `rulesets/repo-gate-policy-tags.json` with `enforcement`
-  set to `disabled` (`scripts/apply_rulesets.sh --repo exigo-AI-Studio/gate-policy`),
+  apply a copy of `rulesets/repo-gate-policy-tags.json` named like
+  `repo-gate-policy-tags-disabled.json` (the script reads the target from the
+  `repo-` prefix and the ruleset from the unchanged `name` field) with
+  `enforcement` set to `disabled` (`scripts/apply_rulesets.sh --repo exigo-AI-Studio/gate-policy <copy>`),
   move the tag from a reviewed commit on `main` (`git tag -f v1 <sha>` and a
   forced push of `v1`), then apply the committed file again. Never leave the
   ruleset disabled.

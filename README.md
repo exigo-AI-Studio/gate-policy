@@ -24,7 +24,9 @@ the wrapup skill and the publish watchdog use this exact string.
   Merge-Endpunkt der API). Direktes Schreiben auf `main` bleibt gesperrt. Das
   Gate sagt also nur für Nicht-Admins immer nein; für MvR ist der Merge-Klick
   die Freigabe, und die globale `CLAUDE.md` stellt genau diesen Weg unter
-  Rückfrage. Kein Repo hat eine zweite, bypass-freie Schicht.
+  Rückfrage. Kein anderes Repo hat eine zweite, bypass-freie Schicht; nur
+  gate-policy selbst (`repo-gate-policy-main.json`, `repo-gate-policy-tags.json`)
+  kennt keinen Bypass, weil es der Vertrauensanker aller anderen ist.
 - **Wer den Status gesetzt hat, prüft das Skript nicht.** Jeder mit
   Schreibrecht kann `gate-receipt` setzen (Spec: „Die Grenze ist benannt,
   nicht versteckt"). Teil C ersetzt den Status durch den Check-Run der
