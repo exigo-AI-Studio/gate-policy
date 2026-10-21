@@ -178,7 +178,9 @@ class FailureTests(unittest.TestCase):
 
 class MainTests(unittest.TestCase):
     def test_main_reports_missing_environment_as_error(self):
-        code = cr.main([], env={"GITHUB_TOKEN": "x"}, api_factory=lambda *a: FakeApi({}))
+        out = []
+        code = cr.main([], env={"GITHUB_TOKEN": "x"}, api_factory=lambda *a: FakeApi({}), emit=out.append)
+        self.assertTrue(out[0].startswith("::error::missing environment"), out)
         self.assertEqual(code, 1)
 
     def test_main_prints_notice_on_success(self):
