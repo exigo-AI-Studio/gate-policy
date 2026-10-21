@@ -1,0 +1,7 @@
+# gate-policy is the trust anchor of every org repository's required check:
+# a change to what runs or what the rulesets say needs the owner's review.
+/.github/ @mvroeder
+/scripts/ @mvroeder
+/rulesets/ @mvroeder
+/tests/ @mvroeder
+/gate.json @mvroeder

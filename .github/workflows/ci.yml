@@ -9,6 +9,9 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -t . -v
       - run: |
-          if [ -d tests ]; then python3 -m unittest discover -s tests -v; else echo "no tests yet"; fi
+          if ls scripts/*.sh >/dev/null 2>&1; then shellcheck scripts/*.sh; else echo "no shell files"; fi
