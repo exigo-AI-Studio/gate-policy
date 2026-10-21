@@ -7,7 +7,7 @@ commits; Conventional Commits.
 ## Build and check
 
 ```sh
-python3 -m unittest discover -s tests -v   # the only test runner, standard library only
+python3 -m unittest discover -s tests -t . -v   # the only test runner, standard library only
 shellcheck scripts/*.sh                     # when shell files exist
 ```
 

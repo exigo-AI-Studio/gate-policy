@@ -11,4 +11,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          if [ -d tests ]; then python3 -m unittest discover -s tests -v; else echo "no tests yet"; fi
+          if [ -d tests ]; then python3 -m unittest discover -s tests -t . -v; else echo "no tests yet"; fi

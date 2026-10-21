@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "scope": [],
+  "base_ref": "origin/main",
+  "required_reviewers": ["pr-reviewer", "security-reviewer"],
+  "steps": [
+    { "name": "unittest", "cmd": "python3 -m unittest discover -s tests -t . -v", "ci": "python3 -m unittest discover -s tests -t . -v" }
+  ],
+  "excluded": []
+}
