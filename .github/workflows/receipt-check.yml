@@ -1,0 +1,13 @@
+# Placeholder until plan task 3 fills it: exists so callers can resolve
+# exigo-AI-Studio/gate-policy/.github/workflows/receipt-check.yml@v1 and the
+# context name GitHub reports for the job can be measured.
+name: receipt-check
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  receipt-check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "placeholder"
