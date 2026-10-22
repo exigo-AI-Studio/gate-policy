@@ -95,9 +95,18 @@ def format_line(number: int, author: str, ok: bool, reason: str) -> str:
     return "#%-6d %-24s %-4s %s" % (number, author, "ok" if ok else "ROT", reason)
 
 
+UNGATED_PREFIXES = ("not gated", "out of scope")   # green without the receipt rule having been applied
+
+
 def summarize(results: list[tuple[int, str, bool, str]], repo: str) -> str:
+    """The sum; says how many green PRs never reached the receipt rule, since
+    a replay of only such PRs proves nothing about it."""
     green = sum(1 for _, _, ok, _ in results if ok)
-    return "%s: %d of %d merged PRs green, %d red" % (repo, green, len(results), len(results) - green)
+    ungated = sum(1 for _, _, ok, reason in results if ok and reason.startswith(UNGATED_PREFIXES))
+    line = "%s: %d of %d merged PRs green, %d red" % (repo, green, len(results), len(results) - green)
+    if ungated:
+        line += " (%d of the green ones not gated or out of scope, receipt rule not exercised)" % ungated
+    return line
 
 
 def replay(repo: str, count: int, token: str, api: cr.Api, emit: Callable[[str], object] = print) -> int:

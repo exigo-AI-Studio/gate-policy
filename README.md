@@ -60,8 +60,13 @@ Eine Zeile je PR (Nummer, Autor, `ok` oder `ROT`, Meldung des Checkers), am
 Ende die Summe. Exit 0 heißt alle grün, 1 mindestens ein roter PR, 2 kein
 Token, die PR-Liste war nicht lesbar oder es gab keinen gemergten PR. Ohne Zahl gelten 25 PRs.
 
-Lesart: ein Repo ist bereit, wenn alle grün sind. Jeder rote PR wird einzeln
-angesehen, denn er hätte beim Pflichtstellen einen Merge blockiert. Die
+Lesart: ein Repo ist bereit, wenn alle grün sind und die grünen PRs die
+Quittungsregel wirklich durchlaufen haben. Die Summe nennt in Klammern, wie
+viele grüne PRs `not gated` oder `out of scope` waren; die beweisen nichts über
+die Quittung (zu junge `gate.json` oder enger `scope`). Ein Bot-PR wird mit dem
+Autor als Absender abgespielt: hat nach dem Bot ein Mensch auf den Branch
+gepusht, wäre der echte Lauf rot gewesen, der Abspielstand bleibt grün. Jeder
+rote PR wird einzeln angesehen, denn er hätte beim Pflichtstellen einen Merge blockiert. Die
 üblichen Ursachen:
 
 - **Fehlender Status.** Meldung `receipt missing`: am Kopf des PR steht kein

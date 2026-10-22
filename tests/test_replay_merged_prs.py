@@ -149,6 +149,10 @@ class TokenTests(unittest.TestCase):
 
 
 class SummaryTests(unittest.TestCase):
+    def test_summary_names_green_prs_that_never_reached_the_receipt_rule(self):
+        results = [(1, "a", True, "out of scope: none of 1 changed files matches gate.json scope"), (2, "b", True, "not gated: no gate.json at base abc"), (3, "c", True, "receipt success on abc1234")]
+        self.assertEqual(rp.summarize(results, REPO), "%s: 3 of 3 merged PRs green, 0 red (2 of the green ones not gated or out of scope, receipt rule not exercised)" % REPO)
+
     def test_summary_counts_green_and_red(self):
         results = [(1, "a", True, ""), (2, "b", False, "x"), (3, "c", True, "")]
         self.assertEqual(rp.summarize(results, REPO), "%s: 2 of 3 merged PRs green, 1 red" % REPO)
