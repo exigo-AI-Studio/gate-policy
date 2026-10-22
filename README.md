@@ -43,6 +43,53 @@ the wrapup skill and the publish watchdog use this exact string.
   API-Commit unterschieben; Dependabot und Renovate rühren Branches mit
   fremden Commits nicht an.
 
+## Vor dem Pflichtstellen eines Repos
+
+Bevor ein Repo in die Include-Liste kommt, wird der Checker lesend gegen seine
+letzten gemergten PRs abgespielt. Das Skript `scripts/replay_merged_prs.py`
+holt sie über die GitHub-API und fährt `check_receipt.main` je PR mit echten
+Daten (Kopf- und Basis-SHA des PR, Autor als Ereignis-Absender). Es schickt
+nur GET-Anfragen; das Token kommt aus `GITHUB_TOKEN` oder `gh auth token` und
+wird nie ausgegeben.
+
+```sh
+python3 -m scripts.replay_merged_prs exigo-AI-Studio/exigo-platform 25
+```
+
+Eine Zeile je PR (Nummer, Autor, `ok` oder `ROT`, Meldung des Checkers), am
+Ende die Summe. Exit 0 heißt alle grün, 1 mindestens ein roter PR, 2 kein
+Token, die PR-Liste war nicht lesbar oder es gab keinen gemergten PR. Ohne Zahl gelten 25 PRs.
+
+Lesart: ein Repo ist bereit, wenn alle grün sind und die grünen PRs die
+Quittungsregel wirklich durchlaufen haben. Die Summe nennt in Klammern, wie
+viele grüne PRs `not gated` oder `out of scope` waren; die beweisen nichts über
+die Quittung (zu junge `gate.json` oder enger `scope`). Ein Bot-PR wird mit dem
+Autor als Absender abgespielt: hat nach dem Bot ein Mensch auf den Branch
+gepusht, wäre der echte Lauf rot gewesen, der Abspielstand bleibt grün. Jeder
+rote PR wird einzeln angesehen, denn er hätte beim Pflichtstellen einen Merge blockiert. Die
+üblichen Ursachen:
+
+- **Fehlender Status.** Meldung `receipt missing`: am Kopf des PR steht kein
+  `gate-receipt`. Das Repo veröffentlicht die Quittung noch nicht als
+  Commit-Status (so bei factory-probe am 2026-10-22, Zahlen siehe unten). Das ist
+  eine echte Lücke im Repo, nicht im Skript; erst schließen, dann aufnehmen.
+- **Bot-Absender.** Ein Bot-PR ist rot, obwohl er nur Abhängigkeiten ändert.
+  Das Ereignis trägt den Login als `renovate[bot]`, `gh pr list --json
+  author` liefert `app/renovate`. Die REST-Liste, die das Skript liest,
+  trägt schon `renovate[bot]`; `sender_for` rechnet die gh-Schreibweise
+  trotzdem um, damit eine mit gh gebildete PR-Liste nicht falsch rot wird. Bleibt
+  ein Bot-PR trotzdem rot, prüfen, ob jeder Commit vom Bot stammt, von GitHub
+  signiert ist (`web-flow`, verifiziert) und der PR vom Bot geöffnet wurde.
+- **Datei außerhalb der Bot-Liste.** Ein Bot-PR berührt neben Abhängigkeiten
+  etwas anderes (zum Beispiel Quellcode oder eine Compose-Datei, die nicht
+  in `DEPENDENCY_FILE_PATTERNS` steht). Die Bot-Regel greift dann nicht, die
+  Quittung wird verlangt. Entweder ist der PR zu Recht rot, oder die Liste
+  braucht ein Muster (eigener PR, gemessen an der konkreten Datei).
+
+Grenzen: die PR-Liste ist nach letzter Änderung sortiert, nicht nach
+Merge-Zeitpunkt; ein sehr aktives Repo kann einen kürzlich gemergten PR
+auslassen. Der Status wird zum heutigen Stand gelesen, nicht zum Merge-Zeitpunkt.
+
 ## Reihenfolge beim Anwenden
 
 1. `exigo-AI-Studio/gate-policy` in claude-config `tools/session-bot-repos.txt`
