@@ -13,8 +13,9 @@ token comes from GITHUB_TOKEN or `gh auth token` and is never printed.
 
 The event sender is the PR author, which is what the real run sees on opened
 and synchronize. A bot is spelled `app/renovate` in `gh pr list --json
-author` but `renovate[bot]` in the event; sender_for converts, otherwise every
-bot PR replays red for the wrong reason.
+author` but `renovate[bot]` in the event. The REST listing used here already
+returns `renovate[bot]`; sender_for still converts the gh spelling, so a PR
+list taken from gh cannot make every bot PR replay red for the wrong reason.
 
 Standard library only. Python 3.9.
 """
@@ -100,11 +101,15 @@ def summarize(results: list[tuple[int, str, bool, str]], repo: str) -> str:
 
 
 def replay(repo: str, count: int, token: str, api: cr.Api, emit: Callable[[str], object] = print) -> int:
-    """Print a line per PR and the sum; 0 when all are green, 1 otherwise, 2 when the listing failed."""
+    """Print a line per PR and the sum; 0 when all are green, 1 when one is red,
+    2 when the listing failed or holds no merged PR (nothing was replayed)."""
     try:
         prs = merged_prs(api, count)
     except cr.ApiError as exc:
         emit("cannot list merged PRs of %s: %s" % (repo, exc))
+        return 2
+    if not prs:
+        emit("no merged PRs found in %s, nothing replayed" % repo)
         return 2
     results = []
     for pr in prs:
@@ -112,7 +117,7 @@ def replay(repo: str, count: int, token: str, api: cr.Api, emit: Callable[[str],
         results.append((pr["number"], author, ok, reason))
         emit(format_line(pr["number"], author, ok, reason))
     emit(summarize(results, repo))
-    return 0 if results and all(ok for _, _, ok, _ in results) else 1
+    return 0 if all(ok for _, _, ok, _ in results) else 1
 
 
 def main(argv: list[str], env: Optional[dict] = None, emit: Callable[[str], object] = print) -> int:

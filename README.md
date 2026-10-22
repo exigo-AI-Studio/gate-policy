@@ -58,7 +58,7 @@ python3 -m scripts.replay_merged_prs exigo-AI-Studio/exigo-platform 25
 
 Eine Zeile je PR (Nummer, Autor, `ok` oder `ROT`, Meldung des Checkers), am
 Ende die Summe. Exit 0 heißt alle grün, 1 mindestens ein roter PR, 2 kein
-Token oder die PR-Liste war nicht lesbar. Ohne Zahl gelten 25 PRs.
+Token, die PR-Liste war nicht lesbar oder es gab keinen gemergten PR. Ohne Zahl gelten 25 PRs.
 
 Lesart: ein Repo ist bereit, wenn alle grün sind. Jeder rote PR wird einzeln
 angesehen, denn er hätte beim Pflichtstellen einen Merge blockiert. Die
@@ -70,7 +70,9 @@ angesehen, denn er hätte beim Pflichtstellen einen Merge blockiert. Die
   eine echte Lücke im Repo, nicht im Skript; erst schließen, dann aufnehmen.
 - **Bot-Absender.** Ein Bot-PR ist rot, obwohl er nur Abhängigkeiten ändert.
   Das Ereignis trägt den Login als `renovate[bot]`, `gh pr list --json
-  author` liefert `app/renovate`; das Skript rechnet um (`sender_for`). Bleibt
+  author` liefert `app/renovate`. Die REST-Liste, die das Skript liest,
+  trägt schon `renovate[bot]`; `sender_for` rechnet die gh-Schreibweise
+  trotzdem um, damit eine mit gh gebildete PR-Liste nicht falsch rot wird. Bleibt
   ein Bot-PR trotzdem rot, prüfen, ob jeder Commit vom Bot stammt, von GitHub
   signiert ist (`web-flow`, verifiziert) und der PR vom Bot geöffnet wurde.
 - **Datei außerhalb der Bot-Liste.** Ein Bot-PR berührt neben Abhängigkeiten

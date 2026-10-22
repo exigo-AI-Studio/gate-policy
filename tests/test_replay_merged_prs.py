@@ -93,6 +93,11 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot list merged PRs", lines[0])
 
+    def test_no_merged_pr_is_exit_two_not_a_green_or_red_verdict(self):
+        code, lines = self.run_replay(FakeApi({LISTING: [pr(1, merged_at=None)]}))
+        self.assertEqual(code, 2)
+        self.assertIn("nothing replayed", lines[0])
+
     def test_token_never_shows_in_the_output(self):
         r = routes(status_pairs=())
         r[LISTING] = [pr(5)]
