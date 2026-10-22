@@ -147,6 +147,28 @@ class BotRuleTests(unittest.TestCase):
         code, reason = cr.decide(FakeApi(r), BOT_ENV)
         self.assertEqual(code, 1)
 
+    def test_bot_rule_covers_the_measured_compose_file(self):
+        # exigo-platform: a renovate PR changed infra/exigo-platform-prod/docker-compose.yml
+        # (1 of its last 40 merged renovate PRs, measured 2026-10-22). Deploys there are
+        # manual (cd.yml is workflow_dispatch only), so a merge does not deploy.
+        r = routes(changed=files("infra/exigo-platform-prod/docker-compose.yml"), scope=(), commit_logins=("renovate[bot]",), status_pairs=())
+        code, reason = cr.decide(FakeApi(r), BOT_ENV)
+        self.assertEqual((code, reason[:17]), (0, "dependency update"))
+
+    def test_compose_exemption_is_exactly_the_measured_file(self):
+        # Every one of these names starts with "compose" or looks like a compose file, and must
+        # still need a receipt: other directories, variants nobody measured, lookalikes.
+        # The first three are real files in exigo-platform that nobody measured; the rest are shape lookalikes.
+        for path in ("infra/litellm/docker-compose.yml", "infra/exigo-platform-edge/docker-compose.yml",
+                     "infra/health-server/docker-compose.yml", "docker-compose.yml", ".github/compose.yml",
+                     "infra/a/b/docker-compose.yml", "infra/exigo-platform-prod/docker-compose.prod.yml",
+                     "infra/exigo-platform-prod/compose.yaml", "infra/exigo-platform-prod/composer.yml",
+                     "infra/exigo-platform-prod/docker-compose.yml.bak", "deploy/docker-compose.yml",
+                     "infra/exigo-platform-prod-x/docker-compose.yml"):
+            r = routes(changed=files(path), scope=(), commit_logins=("renovate[bot]",), status_pairs=())
+            code, _ = cr.decide(FakeApi(r), BOT_ENV)
+            self.assertEqual(code, 1, path)
+
     def test_bot_rule_ignores_commit_without_author_account(self):
         r = routes(changed=files("go.mod"), scope=(), commit_logins=(None,), status_pairs=(), pr_user="dependabot[bot]")
         code, reason = cr.decide(FakeApi(r), BOT_ENV)

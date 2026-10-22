@@ -39,6 +39,7 @@ DEPENDENCY_FILE_PATTERNS = (
     r"(^|/)(pyproject\.toml|uv\.lock|requirements[^/]*\.txt)$",
     r"(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml)$",
     r"(^|/)Dockerfile[^/]*$",
+    r"^infra/exigo-platform-prod/docker-compose\.yml$",   # exactly the measured file; deploys of it are manual
     r"^\.github/workflows/[^/]+\.ya?ml$",
     r"^renovate\.json$",
 )

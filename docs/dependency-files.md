@@ -21,6 +21,7 @@ Das Skript prüft Autor, Committer `web-flow` und GitHubs Signatur auf jedem Com
 | Python (uv) | `(^|/)(pyproject\.toml|uv\.lock|requirements[^/]*\.txt)$` | gusto-helvetico, studio-ops |
 | Node | `(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml)$` | gusto-helvetico, donework.ai |
 | Docker | `(^|/)Dockerfile[^/]*$` | exigo-platform (Wurzel), gusto-helvetico (`infra/`) |
+| Docker Compose | `^infra/exigo-platform-prod/docker-compose\.yml$` (genau diese Datei) | exigo-platform (ein Renovate-PR von 40 gemergten; ergänzt am 2026-10-22 nach MvRs Entscheidung; Deploys laufen nur manuell, `cd.yml` ist `workflow_dispatch`). Die fünf anderen `infra/*/docker-compose.yml` dort und alle Repos ohne diese Datei sind bewusst nicht erfasst. |
 | GitHub Actions | `^\.github/workflows/[^/]+\.ya?ml$` | alle Org-Repos |
 | Renovate-Konfiguration | `^renovate\.json$` | exigo-platform |
 
