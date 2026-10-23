@@ -106,9 +106,12 @@ auslassen. Der Status wird zum heutigen Stand gelesen, nicht zum Merge-Zeitpunkt
    factory-runtime und exigo-platform. Vorher wurde der Checker lesend gegen
    ihre letzten 20 bis 25 gemergten PRs abgespielt: 65 von 65 grün, darunter
    zwei Renovate-PRs in exigo-platform über die Bot-Regel; den Dependabot-Fall
-   zeigt ein abgespielter PR aus gusto-helvetico (#321, erster Zug). Noch nicht
-   dabei ist factory-probe: bei 15 von 25 abgespielten PRs fehlte der
-   Quittungs-Status, weil das Register es noch nicht als `receipt-check` führt.
+   zeigt ein abgespielter PR aus gusto-helvetico (#321, erster Zug). Dritter Zug:
+   factory-probe. Beim Abspielen fehlte bei 15 von 25 PRs der Quittungs-Status, weil
+   das Register das Repo noch nicht als `receipt-check` führte; alle 15 roten
+   gehören vor den Registereintrag vom 2026-10-21 18:09 (claude-config#500), der
+   eine PR danach (#91, 2026-10-22) ist grün. Das ist eine dünne Stichprobe: ein
+   PR in factory-probe ohne `gate publish-receipt` ist von nun an rot, wie vorgesehen.
    Die Aufnahme ersetzt die alten Prüfungen nicht: `gate-receipt` in
    factory-selfhost und factory-runtime (Repo-Ruleset) und der PR-Schritt im
    `gate`-Job von exigo-platform bleiben, bis sie je Repo in einem eigenen

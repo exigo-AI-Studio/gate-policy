@@ -18,7 +18,8 @@
         "donework.ai",
         "factory-selfhost",
         "factory-runtime",
-        "exigo-platform"
+        "exigo-platform",
+        "factory-probe"
       ],
       "exclude": [],
       "protected": false
