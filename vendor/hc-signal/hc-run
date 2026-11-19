@@ -1,0 +1,558 @@
+#!/usr/bin/env bash
+# hc-signal 1.0.0 sha256:a0de31932dac16493e69fb4a22fd1f2a7ba0627cbfd1ce10eb24635890c4b824
+# hc-run: shell client of the watchtower signal contract (clients/CONTRACT.md).
+#
+#   hc-run <slug> -- <command> [args...]
+#
+# Sends /start before the run and one closing ping with the same rid after it,
+# maps the exit code of the command to ok / fail / unchecked, and returns the
+# exit code of the command unchanged. A failing ping never changes it.
+#
+# Environment: HC_PING_BASE, HC_PING_KEY or HC_PING_KEY_FILE, HC_PING_HOST,
+# HC_BODY_FILE, HC_BODY_TAIL, HC_STATE_DIR, HC_SIGNAL_DRILL=fail.
+# HC_RETRY_SLEEP (seconds between ping attempts, default 2) exists for tests.
+#
+# Runs on macOS /bin/bash 3.2 and on bash 5: no associative arrays, no
+# ${var,,}, no mapfile, no [[ -v ]], no |&, and no stat (GNU and BSD differ).
+
+CLIENT_NAME="hc-run"
+CLIENT_VERSION="1.0.0"
+DEFAULT_BASE="https://exigo-watchtower.exe.xyz/ping"
+ALLOWED_HTTPS_HOST="exigo-watchtower.exe.xyz"
+UNCHECKED_ESCALATE_AT=3   # consecutive unchecked runs from which the ping is /fail
+UNCHECKED_MAX=9999        # counter ceiling, keeps "n=" within four digits
+BODY_MAX_BYTES=8000
+BODY_TAIL_MAX=50
+PING_ATTEMPTS=3
+PING_TIMEOUT=10
+TRUNCATED_LINE="[output truncated: one line of $((BODY_MAX_BYTES * 2)) bytes or more]"
+TAIL_LINE_MAX=$((BODY_MAX_BYTES * 2))
+
+warn() { printf 'hc-run: %s\n' "$*" >&2; }
+
+usage() {
+  printf 'usage: hc-run <slug> -- <command> [args...]\n' >&2
+  exit 64
+}
+
+[ "$#" -ge 3 ] || usage
+SLUG=$1
+shift
+[ "$1" = "--" ] || usage
+shift
+
+# A PING_KEY exported by the caller would keep its export attribute when assigned
+# below and reach the wrapped command with the real key: start from a plain shell variable.
+unset PING_KEY
+PING_READY=0
+PING_BASE=""
+PING_KEY=""
+BASE_SCHEME=""
+HOST_HEADER=""
+RID=""
+TMPD=""
+STATE_FILE=""
+RETRY_SLEEP=${HC_RETRY_SLEEP:-2}
+case $RETRY_SLEEP in '' | *[!0-9]*) RETRY_SLEEP=2 ;; esac
+
+# shellcheck disable=SC2329  # invoked through the EXIT trap
+cleanup() {
+  [ -n "$TMPD" ] && rm -rf "$TMPD"
+}
+trap cleanup EXIT
+
+# TERM, HUP and INT go on to the command while it runs (JOBPID is set); the wrapper then
+# carries on as if the command had ended on its own: closing ping, the command's exit code.
+# Before the command starts and after it has ended there is nothing to forward to, and the
+# wrapper ends itself (the EXIT trap removes the temp dir, which holds the key).
+JOBPID=""
+# shellcheck disable=SC2329  # invoked through the signal traps
+on_signal() {
+  if [ -n "$JOBPID" ]; then
+    kill -s "$1" "$JOBPID" 2>/dev/null
+  else
+    exit $((128 + $2))
+  fi
+}
+trap 'on_signal INT 2' INT
+trap 'on_signal TERM 15' TERM
+trap 'on_signal HUP 1' HUP
+
+# ---------------------------------------------------------------- setup
+
+# Parse and vet the base URL. The host is compared after splitting, exactly,
+# never as a string prefix. Only characters that cannot carry userinfo, a
+# query, a fragment or a quote (the URL ends up in a curl config) are allowed.
+vet_base() {
+  local b=$1 rest auth host port path
+  case $b in
+    *[!]A-Za-z0-9._~:/[-]*) return 1 ;;
+  esac
+  case $b in
+    https://*) BASE_SCHEME=https; rest=${b#https://} ;;
+    http://*) BASE_SCHEME=http; rest=${b#http://} ;;
+    *) return 1 ;;
+  esac
+  auth=${rest%%/*}
+  case $rest in
+    */*) path=/${rest#*/} ;;
+    *) path="" ;;
+  esac
+  case $auth in
+    \[*)
+      host=${auth%%]*}]
+      port=${auth#"$host"}
+      ;;
+    *:*)
+      host=${auth%%:*}
+      port=:${auth#*:}
+      ;;
+    *)
+      host=$auth
+      port=""
+      ;;
+  esac
+  case $port in
+    '') ;;
+    :*) case ${port#:} in '' | *[!0-9]* | ??????*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+  if [ "$BASE_SCHEME" = https ]; then
+    [ "$host" = "$ALLOWED_HTTPS_HOST" ] && [ -z "$port" ] || return 1
+  else
+    [ "$host" = "127.0.0.1" ] || [ "$host" = "[::1]" ] || return 1
+  fi
+  while [ "${path%/}" != "$path" ]; do path=${path%/}; done
+  PING_BASE=$BASE_SCHEME://$auth$path
+  return 0
+}
+
+# Owner is the calling user, no permission bit for group or others. Plain
+# find predicates, the same on GNU and BSD.
+key_file_ok() {
+  local f=$1
+  [ -n "$(find "$f" -maxdepth 0 -type f -uid "$(id -u)" 2>/dev/null)" ] || return 1
+  [ -z "$(find "$f" -maxdepth 0 \( -perm -040 -o -perm -020 -o -perm -010 \
+    -o -perm -004 -o -perm -002 -o -perm -001 \) 2>/dev/null)" ] || return 1
+  return 0
+}
+
+make_rid() {
+  local r=""
+  if command -v uuidgen >/dev/null 2>&1; then
+    r=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    r=$(cat /proc/sys/kernel/random/uuid 2>/dev/null)
+  fi
+  case $r in
+    ????????-????-????-????-????????????) ;;
+    *) return 1 ;;
+  esac
+  case $r in *[!0-9a-f-]*) return 1 ;; esac
+  RID=$r
+}
+
+init_ping() {
+  local base key keyfile
+  case $SLUG in
+    '' | -* | *[!a-z0-9-]*) warn "invalid slug, no pings are sent"; return 1 ;;
+  esac
+  [ "${#SLUG}" -le 63 ] || { warn "invalid slug, no pings are sent"; return 1; }
+
+  base=${HC_PING_BASE:-$DEFAULT_BASE}
+  vet_base "$base" || { warn "HC_PING_BASE rejected (only the watchtower over https or a loopback http base), no pings are sent"; return 1; }
+
+  if [ -n "${HC_PING_HOST:-}" ]; then
+    if [ "$BASE_SCHEME" != http ]; then
+      warn "HC_PING_HOST needs a loopback base, no pings are sent"
+      return 1
+    fi
+    case $HC_PING_HOST in
+      *[!A-Za-z0-9.:-]*) warn "HC_PING_HOST rejected, no pings are sent"; return 1 ;;
+    esac
+    HOST_HEADER=$HC_PING_HOST
+  fi
+
+  key=${HC_PING_KEY:-}
+  if [ -z "$key" ]; then
+    keyfile=${HC_PING_KEY_FILE:-}
+    if [ -z "$keyfile" ]; then
+      warn "no ping key configured (HC_PING_KEY or HC_PING_KEY_FILE), no pings are sent"
+      return 1
+    fi
+    if ! key_file_ok "$keyfile"; then
+      warn "HC_PING_KEY_FILE is not a file of the calling user with mode 0600 or stricter, no pings are sent"
+      return 1
+    fi
+    IFS= read -r key <"$keyfile" 2>/dev/null
+    key=${key%$'\r'}
+  fi
+  case $key in
+    '' | *[!A-Za-z0-9_-]*) warn "ping key missing or malformed, no pings are sent"; return 1 ;;
+  esac
+  PING_KEY=$key
+
+  command -v curl >/dev/null 2>&1 || { warn "curl not found, no pings are sent"; return 1; }
+  make_rid || { warn "no uuid source (uuidgen or /proc/sys/kernel/random/uuid), no pings are sent"; return 1; }
+  TMPD=$(mktemp -d "${TMPDIR:-/tmp}/hc-run.XXXXXX" 2>/dev/null) || { TMPD=""; warn "no temp dir, no pings are sent"; return 1; }
+  PING_READY=1
+  return 0
+}
+
+init_ping || PING_READY=0
+# The key now lives in PING_KEY only. The wrapped command and everything it starts
+# must not inherit it (an env dump in a crash report or CI log would leak it).
+unset HC_PING_KEY HC_PING_KEY_FILE
+
+# ---------------------------------------------------------------- state
+
+if [ "$PING_READY" = 1 ]; then
+  if [ -n "${HC_STATE_DIR:-}" ]; then
+    STATE_DIR=$HC_STATE_DIR
+  elif [ -n "${XDG_STATE_HOME:-}" ]; then
+    STATE_DIR=$XDG_STATE_HOME/hc-signal
+  elif [ -n "${HOME:-}" ]; then
+    STATE_DIR=$HOME/.local/state/hc-signal
+  else
+    STATE_DIR=""
+  fi
+  [ -n "$STATE_DIR" ] && STATE_FILE=$STATE_DIR/$SLUG.unchecked
+fi
+
+# Create the state directory if need be and vet it: a real directory (no symlink), owned
+# by the caller, no write permission for group or others. Whoever may write there could
+# replace the counter or plant a FIFO and thereby keep an escalation from ever happening.
+# Plain find predicates, the same on GNU and BSD (find does not follow a symlink here).
+prepare_state() {
+  [ -n "$STATE_FILE" ] || { warn "no state directory, unchecked counter not persisted"; return 1; }
+  if ! (umask 077; mkdir -p "$STATE_DIR") 2>/dev/null; then
+    warn "cannot write the unchecked counter"
+    return 1
+  fi
+  if [ -z "$(find "$STATE_DIR" -maxdepth 0 -type d -uid "$(id -u)" 2>/dev/null)" ] \
+    || [ -n "$(find "$STATE_DIR" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    warn "state directory is a symlink, not owned by the caller or writable by others, unchecked counter not used"
+    return 1
+  fi
+  return 0
+}
+
+# Prints the counter (0 if there is none or it is garbage). Returns 1 if the counter file
+# exists but is not a regular file of the caller; it is not opened then (a FIFO would block).
+read_counter() {
+  local v=0
+  if [ -e "$STATE_FILE" ] || [ -L "$STATE_FILE" ]; then
+    if [ -z "$(find "$STATE_FILE" -maxdepth 0 -type f -uid "$(id -u)" 2>/dev/null)" ]; then
+      warn "unchecked counter is not a regular file of the calling user"
+      return 1
+    fi
+    IFS= read -r v <"$STATE_FILE" 2>/dev/null
+  fi
+  case $v in
+    '' | *[!0-9]* | ?????*) v=0 ;;
+  esac
+  printf '%s' "$((10#$v))"
+}
+
+write_counter() {
+  local tmp=""
+  prepare_state || return 1
+  # mktemp creates the file exclusively (no pre-planted symlink is followed) and 0600.
+  if ! tmp=$(mktemp "$STATE_DIR/.$SLUG.XXXXXX" 2>/dev/null) \
+    || ! printf '%s\n' "$1" >"$tmp" 2>/dev/null \
+    || ! mv -f "$tmp" "$STATE_FILE" 2>/dev/null; then
+    [ -n "$tmp" ] && rm -f "$tmp" 2>/dev/null
+    warn "cannot write the unchecked counter"
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------- redaction
+
+write_redact_script() {
+  cat >"$TMPD/redact.sed" <<'EOF'
+s#https?://[^[:space:]/]*/ping/[^[:space:]]*#[REDACTED]#g
+s#(://)[^/[:space:]@]+@#\1[REDACTED]@#g
+s#([Bb][Ee][Aa][Rr][Ee][Rr])[[:space:]]+[A-Za-z0-9._~+/=-]+#\1 [REDACTED]#g
+s#(ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|xox[abpr]-)[A-Za-z0-9_-]+#[REDACTED]#g
+s#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*#[REDACTED]#g
+s#(AKIA|ASIA)[0-9A-Z]{16}#[REDACTED]#g
+s#([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:).*#\1 [REDACTED]#g
+s#([Cc][Oo][Oo][Kk][Ii][Ee]:).*#\1 [REDACTED]#g
+s#([A-Za-z0-9_.-]*([Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Kk][Ee][Yy])[A-Za-z0-9_.-]*["']?[[:space:]]*[=:][[:space:]]*)("[^"]*"|'[^']*'|[^[:space:]"',;&]+)#\1[REDACTED]#g
+EOF
+  printf 's#%s#[REDACTED]#g\n' "$PING_KEY" >>"$TMPD/redact.sed"
+}
+
+# The helper programs below run with LC_ALL=C: they count bytes (fold -b against awk length())
+# and cannot trip over bytes that are not valid UTF-8, where a BSD sed stops and the lines would
+# be lost. The command itself keeps the environment of the caller.
+redact() {
+  LC_ALL=C awk '
+    inpem { if ($0 ~ /-----END [A-Z0-9 ]*-----/) inpem = 0; next }
+    /-----BEGIN [A-Z0-9 ]*-----/ {
+      print "[REDACTED PEM BLOCK]"
+      if ($0 !~ /-----END [A-Z0-9 ]*-----/) inpem = 1
+      next
+    }
+    { print }
+  ' | LC_ALL=C sed -E -f "$TMPD/redact.sed"
+}
+
+# The tail mode copy of the job output, as a stream filter: bounded in memory and on disk
+# whatever the job prints. A line is cut into pieces of TAIL_LINE_MAX bytes first (fold is a
+# streaming tool, awk and sed would read a whole line); a run of full pieces, that is a line of
+# TAIL_LINE_MAX bytes or more, is replaced by the marker line, nothing of it is kept (a secret
+# must not be cut in half). Then the redaction, over the whole stream, and only then the window
+# of the last N lines: a PEM block whose BEGIN line is long gone is still seen as one.
+# An exactly TAIL_LINE_MAX bytes long line takes the line after it along: fold cannot tell.
+tail_filter() {
+  LC_ALL=C fold -b -w "$TAIL_LINE_MAX" \
+    | LC_ALL=C awk -v w="$TAIL_LINE_MAX" -v marker="$TRUNCATED_LINE" '
+        length($0) >= w { long = 1; next }
+        long { long = 0; print marker; next }
+        { print }
+        END { if (long) print marker }
+      ' \
+    | redact \
+    | LC_ALL=C awk -v n="$TAIL" '
+        { buf[NR % n] = $0 }
+        END {
+          first = NR - n + 1
+          if (first < 1) first = 1
+          for (i = first; i <= NR; i++) print buf[i % n]
+        }
+      '
+}
+
+# Wait for the command, and keep waiting when a forwarded signal interrupts the wait.
+wait_for_job() {
+  local pid=$JOBPID
+  while :; do
+    wait "$pid" 2>/dev/null
+    CODE=$?
+    kill -0 "$pid" 2>/dev/null || break
+  done
+  JOBPID=""
+}
+
+# Text after a cut that may have fallen inside a PEM block: the BEGIN line is not in it,
+# so redact() would never see the block. Leading lines that look like Base64 content (at
+# least 40 characters from [A-Za-z0-9+/], then at most two =) are dropped, and so is the
+# -----END line that closes them. A short Base64-like line directly before an END line (the
+# last row of a block) goes with it. Dropping stops at the first line that is none of these.
+drop_pem_fragment() {
+  LC_ALL=C awk '
+    BEGIN { state = 0; seen_header = 0; first = 1; b64 = "^[A-Za-z0-9+/]+=?=?$" }
+    state == 0 {
+      line = $0
+      sub(/[ \t\r]+$/, "", line)    # CRLF line ends and trailing blanks must not hide a row
+      was_first = first
+      first = 0
+      if (line ~ /-----END [A-Z0-9 ]*-----/) { state = 2; next }
+      # header of a legacy encrypted block or of PGP armor, and the blank line after it
+      if (line ~ /^(Proc-Type|DEK-Info|Version|Comment|Hash|Charset|MessageID):/) { seen_header = 1; next }
+      # a blank line after the header, or at the very start of the window (the cut fell inside
+      # the header line, and that fragment is already gone)
+      if (line == "" && (seen_header || was_first)) { seen_header = 0; next }
+      # the checksum line of PGP armor (no interval expressions: mawk does not have them)
+      if (line ~ /^=[A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/]$/) next
+      body = line
+      sub(/=+$/, "", body)
+      if (line ~ b64 && length(body) >= 40) next
+      if (line ~ b64) { held = $0; state = 1; next }
+      state = 2; print; next
+    }
+    state == 1 {
+      line = $0
+      sub(/[ \t\r]+$/, "", line)
+      if (line ~ /-----END [A-Z0-9 ]*-----/) { state = 2; next }
+      # a short last row before the checksum line of PGP armor: drop the row, go on
+      if (line ~ /^=[A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/][A-Za-z0-9+\/]$/) { state = 0; next }
+      print held; print; state = 2; next
+    }
+    { print }
+    END { if (state == 1) print held }
+  '
+}
+
+# ---------------------------------------------------------------- pings
+
+send_once() {
+  local url=$1 bodyname=$2
+  {
+    printf 'url = "%s"\n' "$url"
+    printf 'request = "POST"\n'
+    printf 'data-binary = "@%s"\n' "$bodyname"
+    printf 'header = "Content-Type: text/plain; charset=utf-8"\n'
+    [ -n "$HOST_HEADER" ] && printf 'header = "Host: %s"\n' "$HOST_HEADER"
+    printf 'max-time = %s\n' "$PING_TIMEOUT"
+    printf 'max-redirs = 0\n'
+    printf 'proto = "=%s"\n' "$BASE_SCHEME"
+    [ "$BASE_SCHEME" = http ] && printf 'noproxy = "*"\n'
+    printf 'silent\n'
+    printf 'output = "/dev/null"\n'
+    printf 'write-out = "%%{http_code}"\n'
+  } | (cd "$TMPD" && curl -q --config - 2>/dev/null)
+}
+
+# send_ping <suffix> <bodyfile-name-in-tmpdir>: up to three attempts, 2xx = success.
+send_ping() {
+  local suffix=$1 bodyname=$2 attempt=1 code url
+  [ "$PING_READY" = 1 ] || return 1
+  url="$PING_BASE/$PING_KEY/$SLUG/$suffix?rid=$RID"
+  while [ "$attempt" -le "$PING_ATTEMPTS" ]; do
+    code=$(send_once "$url" "$bodyname")
+    case $code in 2??) return 0 ;; esac
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$PING_ATTEMPTS" ] && sleep "$RETRY_SLEEP"
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------- the run
+
+TAIL=0
+case ${HC_BODY_TAIL:-} in
+  '' | *[!0-9]*) TAIL=0 ;;
+  ?????*) TAIL=$BODY_TAIL_MAX ;;
+  *) TAIL=$((10#$HC_BODY_TAIL)) ;;
+esac
+[ "$TAIL" -le "$BODY_TAIL_MAX" ] || TAIL=$BODY_TAIL_MAX
+
+if [ "$PING_READY" = 1 ]; then
+  # The redaction script holds the ping key: private, and ready before the command runs
+  # (the tail mode redacts the stream while the command is still writing).
+  (umask 077; write_redact_script)
+  : >"$TMPD/empty"
+  send_ping start empty || warn "start ping failed"
+fi
+
+# Without a terminal the command runs in the background and the wrapper waits for it, so that
+# a signal for the wrapper reaches the command at once (bash holds a trap back until a
+# foreground command is done). A background job of a non-interactive bash gets /dev/null as
+# stdin and ignores INT, both unless job control is on, so the start is wrapped in set -m
+# (the command then also has a process group of its own, and keeps the caller's stdin).
+# With a terminal on stdin, or a controlling terminal at all, the command stays in the
+# foreground: the terminal sends its signals (Ctrl-C) to the command itself, and a background
+# process group could not read the terminal.
+# A command with redirected stdin can still use the controlling terminal (ssh, sudo and gpg
+# prompt on /dev/tty): in a background process group it would stop on its first read. Without
+# a controlling terminal (launchd, systemd, cron, a CI job) opening /dev/tty fails.
+FOREGROUND=0
+if [ -t 0 ] || ( : </dev/tty ) 2>/dev/null; then FOREGROUND=1; fi
+
+# run_job <output file or empty> <command> [args...]: sets CODE.
+run_job() {
+  local out=$1
+  shift
+  if [ "$FOREGROUND" = 1 ]; then
+    if [ -n "$out" ]; then "$@" >"$out" 2>&1; else "$@"; fi
+    CODE=$?
+    return 0
+  fi
+  set -m
+  if [ -n "$out" ]; then
+    ( exec "$@" >"$out" 2>&1 ) &
+  else
+    ( exec "$@" ) &
+  fi
+  JOBPID=$!
+  set +m
+  wait_for_job
+}
+
+CODE=0
+if [ "$PING_READY" = 1 ] && [ "$TAIL" -gt 0 ] && command -v tee >/dev/null 2>&1 \
+  && command -v fold >/dev/null 2>&1 && mkfifo "$TMPD/out" "$TMPD/copy" 2>/dev/null; then
+  # command -> out -> tee (the caller sees stdout and stderr, merged, as they come) -> copy
+  # -> tail_filter -> jobtail. Nothing of the output is stored but the last TAIL lines.
+  # The FIFO stays open for reading in this subshell until the stream ends. If the filter dies
+  # (a missing tool, a full disk), the rest is read and thrown away: tee must never lose its
+  # reader, or the command would get SIGPIPE on its next write and die of the client's fault.
+  ( exec 4<"$TMPD/copy"; tail_filter <&4 >"$TMPD/jobtail"; cat <&4 >/dev/null ) &
+  FILTER_PID=$!
+  (exec tee "$TMPD/copy" <"$TMPD/out") &
+  TEE_PID=$!
+  run_job "$TMPD/out" "$@"
+  wait "$TEE_PID" "$FILTER_PID"
+else
+  [ "$TAIL" -gt 0 ] && [ "$PING_READY" = 1 ] && { warn "tee, fold or mkfifo missing, output tail not captured"; TAIL=0; }
+  run_job "" "$@"
+fi
+
+if [ "$PING_READY" = 1 ]; then
+  DRILL=0
+  [ "${HC_SIGNAL_DRILL:-}" = fail ] && DRILL=1
+
+  SUFFIX=""
+  LINE=""
+  if [ "$DRILL" = 1 ]; then
+    SUFFIX=fail
+    LINE="state=fail client=$CLIENT_NAME/$CLIENT_VERSION reason=drill"
+  elif [ "$CODE" -eq 0 ]; then
+    SUFFIX=0
+    LINE="state=ok client=$CLIENT_NAME/$CLIENT_VERSION"
+    write_counter 0
+  elif [ "$CODE" -eq 75 ]; then
+    N=""
+    if prepare_state && N=$(read_counter); then
+      N=$((N + 1))
+      [ "$N" -le "$UNCHECKED_MAX" ] || N=$UNCHECKED_MAX
+      write_counter "$N" || N=""
+    else
+      N=""
+    fi
+    if [ -z "$N" ]; then
+      # Without a counter the escalation would silently never happen: be loud instead.
+      SUFFIX=fail
+      LINE="state=fail client=$CLIENT_NAME/$CLIENT_VERSION reason=state_unwritable"
+    else
+      if [ "$N" -ge "$UNCHECKED_ESCALATE_AT" ]; then SUFFIX=fail; else SUFFIX=0; fi
+      LINE="state=unchecked client=$CLIENT_NAME/$CLIENT_VERSION reason=exit_75 n=$N"
+    fi
+  else
+    SUFFIX=$CODE
+    LINE="state=fail client=$CLIENT_NAME/$CLIENT_VERSION reason=exit_$CODE"
+    write_counter 0
+  fi
+
+  # Everything after the first line: finding file, then optional output tail.
+  : >"$TMPD/rest.raw"
+  if [ -n "${HC_BODY_FILE:-}" ] && [ -f "$HC_BODY_FILE" ] && [ -r "$HC_BODY_FILE" ]; then
+    # Take the last 2 * BODY_MAX_BYTES; when the file is longer, the first line of the
+    # window is a fragment, and a secret cut in half would no longer match a pattern.
+    # A PEM block whose BEGIN line lies before the window is cut away as well, and when
+    # the window is a single line a marker stands in for it.
+    BODY_SIZE=$(wc -c <"$HC_BODY_FILE" 2>/dev/null | tr -d ' ')
+    case $BODY_SIZE in '' | *[!0-9]*) BODY_SIZE=0 ;; esac
+    if [ "$BODY_SIZE" -gt $((BODY_MAX_BYTES * 2)) ]; then
+      tail -c $((BODY_MAX_BYTES * 2)) "$HC_BODY_FILE" 2>/dev/null | LC_ALL=C sed '1d' >"$TMPD/window.raw"
+      if [ -s "$TMPD/window.raw" ]; then
+        drop_pem_fragment <"$TMPD/window.raw" >>"$TMPD/rest.raw"
+      else
+        printf '%s\n' "$TRUNCATED_LINE" >>"$TMPD/rest.raw"
+      fi
+      rm -f "$TMPD/window.raw"
+    else
+      cat "$HC_BODY_FILE" >>"$TMPD/rest.raw" 2>/dev/null
+    fi
+    printf '\n' >>"$TMPD/rest.raw"
+  fi
+  # The finding file is redacted now, the output tail already was (while it streamed by).
+  {
+    redact <"$TMPD/rest.raw" 2>/dev/null
+    if [ "$TAIL" -gt 0 ] && [ -f "$TMPD/jobtail" ]; then cat "$TMPD/jobtail" 2>/dev/null; fi
+  } | LC_ALL=C awk 'NF { while (blank > 0) { print ""; blank-- } print; next } { blank++ }' \
+      >"$TMPD/rest.red" 2>/dev/null || : >"$TMPD/rest.red"
+  REST_MAX=$((BODY_MAX_BYTES - ${#LINE} - 1))
+  tail -c "$REST_MAX" "$TMPD/rest.red" >"$TMPD/rest" 2>/dev/null
+  {
+    printf '%s\n' "$LINE"
+    if [ -n "$(tr -d ' \t\r\n' <"$TMPD/rest")" ]; then cat "$TMPD/rest"; fi
+  } >"$TMPD/body"
+
+  send_ping "$SUFFIX" body || warn "closing ping failed"
+fi
+
+exit "$CODE"
