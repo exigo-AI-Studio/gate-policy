@@ -11,6 +11,12 @@ The repository is public since 2026-10-21 (MvR): a caller's workflow runs with
 a token scoped to the caller, which cannot check out a private gate-policy.
 Nothing here is secret; tag and branch rulesets guard what runs.
 
+Second, smaller part: the daily fleet check `gate-fleet-check`
+(`scripts/gate-fleet-check.sh`, LaunchAgent in `launchd/`), which runs
+claude-config's `gate doctor --fleet` on the Mac mini and reports to
+exigo-watchtower through the vendored client `vendor/hc-signal/hc-run`.
+Runbook: `docs/runbooks/gate-fleet-check.md`.
+
 Every org repository calls the workflow through an identical file
 `.github/workflows/gate-policy.yml` pinned to the moving tag `v1`. The
 workflow never checks out or runs caller code; it reads through the API only.
