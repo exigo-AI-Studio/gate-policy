@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.mvroeder.gate-fleet-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>/bin/bash /Users/mvroeder/dev/exigo-ai-studio/gate-policy/vendor/hc-signal/hc-run gate-fleet-check -- /bin/bash /Users/mvroeder/dev/exigo-ai-studio/gate-policy/scripts/gate-fleet-check.sh; rc=$?; exit "$rc"</string>
+  </array>
+  <!-- hc-run is a child of this bash, not its replacement (no exec, hence the
+       "rc=$?; exit"): launchd keeps starting /bin/bash, whatever version of
+       the vendored client sits underneath. The ping key is read by hc-run
+       from HC_PING_KEY_FILE (a path, mode 0600, created by hand), never
+       written here. The slug is the check name in exigo-monitoring's
+       inventory/checks.toml. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HC_PING_KEY_FILE</key><string>/Users/mvroeder/.config/exigo/hc-ping-key</string>
+    <key>HC_STATE_DIR</key><string>/Users/mvroeder/.local/state/hc-signal</string>
+    <key>HC_BODY_FILE</key><string>/Users/mvroeder/.claude/logs/gate-fleet-check.hc-body</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/mvroeder/.claude/logs/gate-fleet-check.log</string>
+  <key>StandardErrorPath</key><string>/Users/mvroeder/.claude/logs/gate-fleet-check-error.log</string>
+</dict>
+</plist>
